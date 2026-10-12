@@ -53,6 +53,7 @@ import {
 } from 'lucide-react';
 import { Property } from '../types';
 import { useToast } from '../contexts/ToastContext';
+import { track } from '../lib/analytics';
 import { generatePropertyPdfReport } from '../utils/propertyReportPdf';
 import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
 import { Tooltip, InfoTooltip, GLOSSARY } from './Tooltip';
@@ -833,6 +834,29 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
 
       const data = await res.json();
       setLiveSearchResult(data);
+
+      const provider = typeof data.providerUsed === 'string' ? data.providerUsed.replace(/\s*\(Cached\)$/, '') : undefined;
+      const county = liveCounty === 'all' ? undefined : liveCounty.toLowerCase().replace(/\s+/g, '_');
+      track('property_search_completed', {
+        provider,
+        county,
+        results_count: Number(data.totalFound) || 0,
+        execution_time_ms: typeof data.executionTimeMs === 'number' ? data.executionTimeMs : undefined,
+      });
+      // Cached responses replay a stale newlyDiscovered list, so only count fresh discoveries.
+      const isCached = typeof data.providerUsed === 'string' && data.providerUsed.endsWith('(Cached)');
+      const addedCount = isCached ? 0 : (Array.isArray(data.newlyDiscovered) ? data.newlyDiscovered.length : 0);
+      if (addedCount > 0) {
+        const persisted = Number(data.persistedCount) || 0;
+        track('property_added', {
+          source: 'county_gis_search',
+          properties_added_count: addedCount,
+          properties_updated_count: Math.max(persisted - addedCount, 0),
+          records_processed_count: Number(data.totalFound) || 0,
+          provider,
+          county,
+        });
+      }
 
       if (data.results && data.results.length > 0) {
         setSelectedProperty(data.results[0].property);

@@ -31,6 +31,7 @@ import {
 import Papa from 'papaparse';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
+import { track } from '../lib/analytics';
 
 export interface DataImportModalProps {
   isOpen: boolean;
@@ -409,6 +410,15 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
       }
 
       setResult(data);
+      if (data.properties_created > 0) {
+        track('property_added', {
+          source: 'csv_import',
+          properties_added_count: Number(data.properties_created) || 0,
+          properties_updated_count: Number(data.properties_updated) || 0,
+          records_processed_count: Number(data.total_records_processed) || parsedData.length,
+          leads_generated_count: Number(data.leads_generated) || 0,
+        });
+      }
       addToast(`Successfully imported ${data.total_records_processed || parsedData.length} records into SQL database!`, 'success');
       fetchImportedFiles();
       if (onSuccess) {
