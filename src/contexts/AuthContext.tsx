@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { identifyUser, resetAnalytics, track } from '../lib/analytics';
 
 export interface UserProfile {
   uid: string;
@@ -106,6 +107,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setActiveTenant(tenant);
     setAvailableTenants([tenant]);
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(payload));
+    identifyUser({
+      id: payload.user.id,
+      name: payload.user.name,
+      email: payload.user.email,
+      role: payload.user.role,
+      organization_id: profile.organization_id,
+      organization_name: profile.organization_name,
+    });
   }, []);
 
   useEffect(() => {
@@ -125,18 +134,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [applySession]);
 
+  const requestLogin = useCallback(async (email: string, pass: string) => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pass }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Sign-in failed');
+    applySession(data);
+  }, [applySession]);
+
   const signInWithEmail = useCallback(async (email: string, pass: string) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: pass }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Sign-in failed');
-      applySession(data);
+      await requestLogin(email, pass);
+      track('login_completed', { login_method: 'email' });
     } catch (err: any) {
       const message = err?.message || 'Sign-in failed';
       setError(message);
@@ -144,7 +158,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setLoading(false);
     }
-  }, [applySession]);
+  }, [requestLogin]);
 
   const signUpWithEmail = useCallback(async (params: SignUpParams) => {
     setLoading(true);
@@ -162,7 +176,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Sign-up failed');
-      await signInWithEmail(params.email, params.password);
+      // Order matters: identify (inside applySession) before sign_up_completed so it attributes to the user.
+      await requestLogin(params.email, params.password);
+      track('sign_up_completed', { sign_up_method: 'email' });
     } catch (err: any) {
       const message = err?.message || 'Sign-up failed';
       setError(message);
@@ -170,7 +186,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setLoading(false);
     }
-  }, [signInWithEmail]);
+  }, [requestLogin]);
 
   const signOut = useCallback(async () => {
     try {
@@ -181,6 +197,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
     } finally {
+      track('logout_completed', {});
+      resetAnalytics();
       sessionStorage.removeItem(SESSION_KEY);
       setAccessToken(null);
       setUser(null);
